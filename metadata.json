@@ -1,0 +1,9 @@
+{
+  "project_type": "fullstack",
+  "prompt": "HarborView Property Operations Portal - HOA and multifamily resident billing, community listings, and service orders with offline-capable local-first architecture",
+  "frontend_language": "typescript",
+  "backend_language": "python",
+  "frontend_framework": "vue",
+  "backend_framework": "fastapi",
+  "database": "postgresql"
+}
