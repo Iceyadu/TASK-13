@@ -196,7 +196,8 @@ export async function removeFromRetryQueue(id: number): Promise<void> {
 }
 
 export async function incrementRetryCount(id: number): Promise<void> {
-  await db.retry_queue.update(id, { retryCount: (await db.retry_queue.get(id))?.retryCount ?? 0 + 1 })
+  const current = await db.retry_queue.get(id)
+  await db.retry_queue.update(id, { retryCount: (current?.retryCount ?? 0) + 1 })
 }
 
 export async function clearRetryQueue(): Promise<void> {

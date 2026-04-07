@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,8 +24,11 @@ async def readiness_check(db: AsyncSession = Depends(get_db)):
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     except Exception:
-        return {
-            "status": "not_ready",
-            "database": "disconnected",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "status": "not_ready",
+                "database": "disconnected",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            },
+        )

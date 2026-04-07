@@ -26,12 +26,24 @@ from app.schemas.listing import (
 router = APIRouter(prefix="/listings", tags=["listings"])
 
 
-def _listing_to_response(listing: Listing) -> dict:
-    """Convert a Listing ORM object to a dict suitable for ListingResponse."""
+async def _listing_to_response(db: AsyncSession, listing: Listing) -> ListingResponse:
     data = ListingResponse.model_validate(listing).model_dump()
     media_ids = [link.media_id for link in (listing.media_links or [])]
-    data["media_ids"] = [str(m) for m in media_ids]
-    return data
+    media_map: dict[str, Media] = {}
+    if media_ids:
+        media_result = await db.execute(select(Media).where(Media.id.in_(media_ids)))
+        media_map = {str(m.id): m for m in media_result.scalars().all()}
+    data["media"] = [
+        {
+            "media_id": link.media_id,
+            "sort_order": link.sort_order,
+            "filename": media_map.get(str(link.media_id)).original_name if media_map.get(str(link.media_id)) else None,
+            "mime_type": media_map.get(str(link.media_id)).mime_type if media_map.get(str(link.media_id)) else None,
+            "file_url": f"/api/v1/media/{link.media_id}/file",
+        }
+        for link in (listing.media_links or [])
+    ]
+    return ListingResponse.model_validate(data)
 
 
 @router.get("/", response_model=ListingListResponse)
@@ -68,8 +80,9 @@ async def list_listings(
     )
     listings = result.scalars().all()
 
+    items = [await _listing_to_response(db, lst) for lst in listings]
     return ListingListResponse(
-        items=[ListingResponse.model_validate(lst) for lst in listings],
+        items=items,
         total=total,
         page=page,
         page_size=page_size,
@@ -96,7 +109,7 @@ async def create_listing(
     await log_audit(db, user_id=current_user.id, action="CREATE", resource_type="listing", resource_id=listing.id, new_value={"title": listing.title, "category": listing.category})
     await db.commit()
     await db.refresh(listing)
-    return ListingResponse.model_validate(listing)
+    return await _listing_to_response(db, listing)
 
 
 @router.get("/{listing_id}", response_model=ListingResponse)
@@ -116,7 +129,7 @@ async def get_listing(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Listing not available"
         )
-    return ListingResponse.model_validate(listing)
+    return await _listing_to_response(db, listing)
 
 
 @router.put("/{listing_id}", response_model=ListingResponse)
@@ -166,7 +179,7 @@ async def update_listing(
     listing.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(listing)
-    return ListingResponse.model_validate(listing)
+    return await _listing_to_response(db, listing)
 
 
 @router.put("/{listing_id}/status", response_model=ListingResponse)
@@ -222,7 +235,7 @@ async def update_listing_status(
     await log_audit(db, user_id=current_user.id, action="UPDATE_STATUS", resource_type="listing", resource_id=listing.id, old_value={"status": old_status}, new_value={"status": body.status})
     await db.commit()
     await db.refresh(listing)
-    return ListingResponse.model_validate(listing)
+    return await _listing_to_response(db, listing)
 
 
 @router.post("/bulk-status", response_model=BulkStatusResponse)

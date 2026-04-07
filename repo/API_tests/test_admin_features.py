@@ -498,7 +498,7 @@ def test_backup_trigger_creates_record(client: httpx.Client, admin_token: str):
     assert resp2.status_code == 200
 
     record = resp2.json()
-    assert record["filename"].endswith(".sql.enc")
+    assert record["filename"].endswith(".bundle.enc")
     assert record["encryption_method"] == "Fernet-AES-128-CBC"
     assert record["status"] == "completed"
     print(f"  filename={record['filename']}, encryption={record['encryption_method']}, status={record['status']}")

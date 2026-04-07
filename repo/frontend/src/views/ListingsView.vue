@@ -38,14 +38,14 @@
         <div v-if="item.media && item.media.length > 0" class="listing-media">
           <div v-for="m in item.media" :key="m.media_id" class="media-thumb">
             <img
-              v-if="m.content_type && m.content_type.startsWith('image/')"
-              :src="apiBaseUrl + '/media/' + m.media_id + '/download'"
+              v-if="m.mime_type && m.mime_type.startsWith('image/')"
+              :src="m.file_url || (apiBaseUrl + '/media/' + m.media_id + '/file')"
               :alt="m.filename || 'media'"
               class="media-img"
             />
             <a
               v-else
-              :href="apiBaseUrl + '/media/' + m.media_id + '/download'"
+              :href="m.file_url || (apiBaseUrl + '/media/' + m.media_id + '/file')"
               target="_blank"
               class="media-link"
             >{{ m.filename || 'Download' }}</a>
@@ -132,11 +132,7 @@ async function setStatus(id: string, status: string, version?: number) {
 }
 
 async function bulkSetStatus(status: string) {
-  for (const id of selectedIds.value) {
-    try {
-      await api.put(`/listings/${id}/status`, { status })
-    } catch { /* skip failures */ }
-  }
+  await api.post('/listings/bulk-status', { listing_ids: selectedIds.value, status })
   selectedIds.value = []
   await fetchListings()
 }

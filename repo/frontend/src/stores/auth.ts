@@ -11,9 +11,9 @@ interface AuthUser {
 }
 
 export const useAuthStore = defineStore('auth', () => {
-  const token = ref<string | null>(localStorage.getItem('harborview_token'))
-  const refreshToken = ref<string | null>(localStorage.getItem('harborview_refresh'))
-  const user = ref<AuthUser | null>(JSON.parse(localStorage.getItem('harborview_user') || 'null'))
+  const token = ref<string | null>(sessionStorage.getItem('harborview_token') || localStorage.getItem('harborview_token'))
+  const refreshToken = ref<string | null>(sessionStorage.getItem('harborview_refresh') || localStorage.getItem('harborview_refresh'))
+  const user = ref<AuthUser | null>(JSON.parse(sessionStorage.getItem('harborview_user') || localStorage.getItem('harborview_user') || 'null'))
   const isAuthenticated = computed(() => !!token.value)
 
   async function login(username: string, password: string): Promise<void> {
@@ -21,9 +21,12 @@ export const useAuthStore = defineStore('auth', () => {
     token.value = resp.data.access_token
     refreshToken.value = resp.data.refresh_token
     user.value = resp.data.user
-    localStorage.setItem('harborview_token', resp.data.access_token)
-    localStorage.setItem('harborview_refresh', resp.data.refresh_token)
-    localStorage.setItem('harborview_user', JSON.stringify(resp.data.user))
+    sessionStorage.setItem('harborview_token', resp.data.access_token)
+    sessionStorage.setItem('harborview_refresh', resp.data.refresh_token)
+    sessionStorage.setItem('harborview_user', JSON.stringify(resp.data.user))
+    localStorage.removeItem('harborview_token')
+    localStorage.removeItem('harborview_refresh')
+    localStorage.removeItem('harborview_user')
     // Initialize offline encryption
     const offlineStore = useOfflineStore()
     await offlineStore.setupEncryption(password)
@@ -35,10 +38,20 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  function logout() {
+  async function logout() {
+    if (refreshToken.value) {
+      try {
+        await api.post('/auth/logout', { refresh_token: refreshToken.value })
+      } catch {
+        // Best-effort token revocation; still clear local session.
+      }
+    }
     token.value = null
     refreshToken.value = null
     user.value = null
+    sessionStorage.removeItem('harborview_token')
+    sessionStorage.removeItem('harborview_refresh')
+    sessionStorage.removeItem('harborview_user')
     localStorage.removeItem('harborview_token')
     localStorage.removeItem('harborview_refresh')
     localStorage.removeItem('harborview_user')
@@ -49,10 +62,16 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   function loadFromStorage() {
-    token.value = localStorage.getItem('harborview_token')
-    refreshToken.value = localStorage.getItem('harborview_refresh')
-    const stored = localStorage.getItem('harborview_user')
+    token.value = sessionStorage.getItem('harborview_token') || localStorage.getItem('harborview_token')
+    refreshToken.value = sessionStorage.getItem('harborview_refresh') || localStorage.getItem('harborview_refresh')
+    const stored = sessionStorage.getItem('harborview_user') || localStorage.getItem('harborview_user')
     user.value = stored ? JSON.parse(stored) : null
+    if (token.value) sessionStorage.setItem('harborview_token', token.value)
+    if (refreshToken.value) sessionStorage.setItem('harborview_refresh', refreshToken.value)
+    if (user.value) sessionStorage.setItem('harborview_user', JSON.stringify(user.value))
+    localStorage.removeItem('harborview_token')
+    localStorage.removeItem('harborview_refresh')
+    localStorage.removeItem('harborview_user')
     // Restore offline encryption from derived key (not raw password)
     const derivedKey = sessionStorage.getItem('harborview_offline_dk')
     if (derivedKey && token.value) {

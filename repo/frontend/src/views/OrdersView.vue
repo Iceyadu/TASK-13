@@ -33,6 +33,26 @@
         </div>
         <p class="order-meta">{{ order.category || 'General' }} | Priority: {{ order.priority }} | {{ order.created_at.slice(0, 10) }}</p>
         <p v-if="order.description" class="order-desc">{{ order.description }}</p>
+        <p v-if="order.assigned_to" class="order-assignee">Assigned to: {{ order.assigned_to }}</p>
+
+        <div v-if="canOperateOrder(order)" class="staff-actions">
+          <button
+            v-if="!order.assigned_to"
+            @click="assignToMe(order)"
+            class="btn-sm btn-assign"
+          >
+            Assign To Me
+          </button>
+          <button
+            v-for="next in nextTransitions(order.status)"
+            :key="next"
+            class="btn-sm"
+            @click="transitionOrder(order, next)"
+          >
+            {{ next.replace('_', ' ') }}
+          </button>
+        </div>
+        <p v-if="actionErrorByOrder[order.id]" class="error">{{ actionErrorByOrder[order.id] }}</p>
         <div class="milestones">
           <div v-for="m in order.milestones" :key="m.created_at" class="milestone">
             <span class="milestone-dot"></span>
@@ -58,14 +78,52 @@ const orders = ref<any[]>([])
 const loading = ref(true)
 const showCreate = ref(false)
 const createError = ref('')
+const actionErrorByOrder = ref<Record<string, string>>({})
 const newOrder = ref({ title: '', description: '', category: '', priority: 'normal' })
 
+const ORDER_TRANSITIONS: Record<string, string[]> = {
+  created: ['payment_recorded'],
+  payment_recorded: ['accepted'],
+  accepted: ['dispatched'],
+  dispatched: ['arrived'],
+  arrived: ['in_service'],
+  in_service: ['completed'],
+  completed: ['after_sales_credit'],
+  after_sales_credit: [],
+}
+
+const TRANSITION_ROLES: Record<string, string[]> = {
+  payment_recorded: ['resident', 'accounting_clerk', 'admin'],
+  accepted: ['property_manager', 'accounting_clerk', 'admin'],
+  dispatched: ['property_manager', 'maintenance_dispatcher', 'admin'],
+  arrived: ['maintenance_dispatcher', 'admin'],
+  in_service: ['maintenance_dispatcher', 'admin'],
+  completed: ['maintenance_dispatcher', 'admin'],
+  after_sales_credit: ['property_manager', 'accounting_clerk', 'admin'],
+}
+
 onMounted(async () => {
+  await fetchOrders()
+})
+
+async function fetchOrders() {
   try {
     const resp = await api.get('/orders/')
     orders.value = resp.data.items || []
   } catch { /* empty */ } finally { loading.value = false }
-})
+}
+
+function canOperateOrder(order: any) {
+  if (!auth.user) return false
+  if (auth.user.role === 'resident') return false
+  return nextTransitions(order.status).length > 0 || !order.assigned_to
+}
+
+function nextTransitions(status: string): string[] {
+  const all = ORDER_TRANSITIONS[status] || []
+  const role = auth.user?.role || ''
+  return all.filter((s) => (TRANSITION_ROLES[s] || []).includes(role))
+}
 
 async function submitOrder() {
   createError.value = ''
@@ -82,9 +140,39 @@ async function submitOrder() {
       idempotency_key: uuidv4(),
     })
     showCreate.value = false
-    const resp = await api.get('/orders/')
-    orders.value = resp.data.items || []
+    await fetchOrders()
   } catch (e: any) { createError.value = e.response?.data?.detail || 'Failed to create order' }
+}
+
+async function assignToMe(order: any) {
+  actionErrorByOrder.value[order.id] = ''
+  try {
+    await api.put(`/orders/${order.id}`, { assigned_to: auth.user?.id }, {
+      headers: { 'If-Match': String(order.version ?? 0) },
+    })
+    await fetchOrders()
+  } catch (e: any) {
+    actionErrorByOrder.value[order.id] = e.response?.data?.detail || 'Failed to assign order'
+  }
+}
+
+async function transitionOrder(order: any, toStatus: string) {
+  actionErrorByOrder.value[order.id] = ''
+  try {
+    await api.post(`/orders/${order.id}/transition`, {
+      to_status: toStatus,
+      notes: `Transitioned to ${toStatus.replace('_', ' ')}`,
+      idempotency_key: uuidv4(),
+    }, {
+      headers: { 'If-Match': String(order.version ?? 0) },
+    })
+    await fetchOrders()
+  } catch (e: any) {
+    const detail = e.response?.data?.detail
+    actionErrorByOrder.value[order.id] = typeof detail === 'string'
+      ? detail
+      : detail?.message || 'Failed to transition order'
+  }
 }
 </script>
 
@@ -97,6 +185,8 @@ async function submitOrder() {
 .order-header h3 { margin: 0; color: #1a3c5e; }
 .order-meta { color: #888; font-size: 13px; margin: 4px 0; }
 .order-desc { color: #555; font-size: 14px; }
+.order-assignee { color: #555; font-size: 12px; margin: 6px 0; }
+.staff-actions { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
 .badge { padding: 3px 10px; border-radius: 10px; font-size: 11px; font-weight: 600; text-transform: capitalize; }
 .badge-created { background: #e3f2fd; color: #1565c0; }
 .badge-payment_recorded { background: #fff3e0; color: #e65100; }
@@ -114,6 +204,7 @@ async function submitOrder() {
 .milestone-notes { color: #666; font-style: italic; }
 .btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
 .btn-primary { background: #1a3c5e; color: white; }
+.btn-assign { background: #6c757d; }
 .empty { color: #888; text-align: center; padding: 24px; }
 .loading { text-align: center; padding: 24px; color: #666; }
 .error { color: #dc3545; font-size: 14px; }

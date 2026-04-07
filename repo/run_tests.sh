@@ -33,11 +33,32 @@ wait_for_backend() {
   return 1
 }
 
+run_pytest() {
+  local test_path="$1"
+  shift
+
+  # Prefer local python when pytest is available.
+  if python -c "import pytest" >/dev/null 2>&1; then
+    python -m pytest "$test_path" -v --tb=short "$@"
+    return $?
+  fi
+
+  # Fallback for CI/evaluator environments where host python lacks pytest.
+  if command -v docker >/dev/null 2>&1; then
+    yellow "Host python has no pytest; running tests inside backend container..."
+    docker compose exec -T backend python -m pytest "$test_path" -v --tb=short "$@"
+    return $?
+  fi
+
+  red "pytest is unavailable (host + docker fallback)."
+  return 127
+}
+
 run_unit_tests() {
   banner "Unit Tests"
   if [ -d "unit_tests" ]; then
     yellow "Running backend unit tests..."
-    python -m pytest unit_tests/backend/ -v --tb=short
+    run_pytest unit_tests/backend/
     local exit_code=$?
     if [ $exit_code -eq 0 ]; then
       green "Unit tests passed."
@@ -57,7 +78,7 @@ run_api_tests() {
 
   if [ -d "API_tests" ]; then
     yellow "Running API tests against $API_BASE_URL ..."
-    API_BASE_URL="$API_BASE_URL" python -m pytest API_tests/ -v --tb=short
+    API_BASE_URL="$API_BASE_URL" run_pytest API_tests/
     local exit_code=$?
     if [ $exit_code -eq 0 ]; then
       green "API tests passed."

@@ -10,7 +10,7 @@ const api = axios.create({
 
 // Auth token interceptor
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('harborview_token')
+  const token = sessionStorage.getItem('harborview_token') || localStorage.getItem('harborview_token')
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
   }
@@ -39,8 +39,12 @@ api.interceptors.response.use(
   async (error: AxiosError) => {
     // 401 — redirect to login
     if (error.response?.status === 401) {
+      sessionStorage.removeItem('harborview_token')
+      sessionStorage.removeItem('harborview_user')
+      sessionStorage.removeItem('harborview_refresh')
       localStorage.removeItem('harborview_token')
       localStorage.removeItem('harborview_user')
+      localStorage.removeItem('harborview_refresh')
       if (window.location.pathname !== '/login') {
         window.location.href = '/login'
       }

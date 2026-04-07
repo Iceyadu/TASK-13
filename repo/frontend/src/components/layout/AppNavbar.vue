@@ -7,8 +7,8 @@ const router = useRouter()
 const auth = useAuthStore()
 const { isOnline } = useSyncManager()
 
-function handleLogout() {
-  auth.logout()
+async function handleLogout() {
+  await auth.logout()
   router.push('/login')
 }
 </script>
@@ -21,9 +21,12 @@ function handleLogout() {
 
         <div class="nav-links">
           <router-link to="/" class="nav-link">Dashboard</router-link>
-          <router-link to="/billing" class="nav-link">Billing</router-link>
-          <router-link to="/orders" class="nav-link">Orders</router-link>
-          <router-link to="/listings" class="nav-link">Listings</router-link>
+          <router-link v-if="auth.hasRole('admin','property_manager','accounting_clerk','resident')" to="/billing" class="nav-link">Billing</router-link>
+          <router-link v-if="auth.hasRole('admin','property_manager','maintenance_dispatcher','resident')" to="/orders" class="nav-link">Orders</router-link>
+          <router-link v-if="auth.hasRole('admin','property_manager','accounting_clerk','maintenance_dispatcher','resident')" to="/listings" class="nav-link">Listings</router-link>
+          <router-link v-if="auth.hasRole('resident')" to="/addresses" class="nav-link">Addresses</router-link>
+          <router-link v-if="auth.hasRole('resident')" to="/payments" class="nav-link">Payments</router-link>
+          <router-link v-if="auth.hasRole('resident','accounting_clerk')" to="/credits" class="nav-link">Credits</router-link>
 
           <template v-if="auth.hasRole('admin')">
             <router-link to="/admin/users" class="nav-link">Users</router-link>

@@ -152,3 +152,39 @@ def test_non_admin_cannot_access_users(base_url):
     resp = httpx.get(f"{base_url}/users/", headers=_h(resident_token))
     print(f"[resident GET users] status={resp.status_code}")
     assert resp.status_code == 403
+
+
+def test_credit_cannot_be_applied_to_other_resident_bill(base_url):
+    """Admin cannot apply a resident's credit to another resident's bill."""
+    admin = _admin(base_url)
+    resident_token = _resident(base_url)
+    resident_id = _get_resident_id(base_url, resident_token)
+
+    bills_resp = httpx.get(f"{base_url}/billing/bills", headers=_h(admin))
+    bills = bills_resp.json().get("items", [])
+    own_bill = next((b for b in bills if b["resident_id"] == resident_id), None)
+    other_bill = next((b for b in bills if b["resident_id"] != resident_id), None)
+    if not own_bill or not other_bill:
+        print("[SKIP] Need bills from two residents for cross-resident credit test")
+        return
+
+    create_resp = httpx.post(
+        f"{base_url}/credits/",
+        headers=_h(admin),
+        json={
+            "resident_id": resident_id,
+            "bill_id": own_bill["id"],
+            "amount": "25.00",
+            "reason": "Cross-resident integrity test",
+        },
+    )
+    assert create_resp.status_code == 201, create_resp.text
+    credit = create_resp.json()
+
+    approve_resp = httpx.put(
+        f"{base_url}/credits/{credit['id']}/approve",
+        headers={**_h(admin), "If-Match": str(credit["version"])},
+        json={"applied_to_bill_id": other_bill["id"]},
+    )
+    print(f"[cross-resident credit approve] status={approve_resp.status_code}")
+    assert approve_resp.status_code == 400

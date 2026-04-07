@@ -75,6 +75,7 @@ import api from '@/services/api'
 
 interface Address {
   id: string
+  version: number
   address_type: string
   line1: string
   line2: string
@@ -90,6 +91,7 @@ const showForm = ref(false)
 const saving = ref(false)
 const formError = ref('')
 const editingId = ref<string | null>(null)
+const editingVersion = ref<number>(0)
 
 const emptyForm = { address_type: 'shipping', line1: '', line2: '', city: '', state: '', zip_code: '' }
 const form = ref({ ...emptyForm })
@@ -111,6 +113,7 @@ async function fetchAddresses() {
 
 function editAddress(addr: Address) {
   editingId.value = addr.id
+  editingVersion.value = addr.version ?? 0
   form.value = { address_type: addr.address_type, line1: addr.line1, line2: addr.line2 || '', city: addr.city, state: addr.state, zip_code: addr.zip_code }
   showForm.value = true
 }
@@ -120,12 +123,15 @@ async function saveAddress() {
   saving.value = true
   try {
     if (editingId.value) {
-      await api.put(`/residents/me/addresses/${editingId.value}`, form.value)
+      await api.put(`/residents/me/addresses/${editingId.value}`, form.value, {
+        headers: { 'If-Match': String(editingVersion.value) },
+      })
     } else {
       await api.post('/residents/me/addresses', form.value)
     }
     form.value = { ...emptyForm }
     editingId.value = null
+    editingVersion.value = 0
     showForm.value = false
     await fetchAddresses()
   } catch (err: any) {

@@ -95,7 +95,8 @@ def _save_to_disk(content: bytes, ext: str) -> tuple[str, str]:
     full_path = UPLOAD_DIR / uuid_filename
     with open(full_path, "wb") as f:
         f.write(content)
-    return uuid_filename, str(full_path)
+    # Persist relative path in DB so paths remain portable across environments.
+    return uuid_filename, uuid_filename
 
 
 # -- General media upload ------------------------------------------------------
@@ -145,7 +146,7 @@ async def get_media_file(
 ):
     media = await _get_media_or_404(db, media_id)
     await _enforce_media_access(db, current_user, media)
-    file_path = Path(media.storage_path)
+    file_path = _resolve_storage_path(media.storage_path)
     if not file_path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="File not found on disk"
@@ -266,9 +267,16 @@ async def _get_media_or_404(db: AsyncSession, media_id: UUID) -> Media:
 
 
 def _delete_file_on_disk(storage_path: str) -> None:
-    file_path = Path(storage_path)
+    file_path = _resolve_storage_path(storage_path)
     if file_path.exists():
         file_path.unlink()
+
+
+def _resolve_storage_path(storage_path: str) -> Path:
+    path = Path(storage_path)
+    if path.is_absolute():
+        return path
+    return UPLOAD_DIR / path
 
 
 async def _enforce_media_access(db: AsyncSession, current_user: User, media: Media) -> None:

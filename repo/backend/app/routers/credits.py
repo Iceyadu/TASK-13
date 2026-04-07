@@ -171,20 +171,28 @@ async def approve_credit(
     credit.status = "approved"
     credit.approved_by = current_user.id
     if body.applied_to_bill_id:
-        credit.applied_to_bill_id = body.applied_to_bill_id
-
-        # Reduce the bill's balance_due when credit is applied
         bill_result = await db.execute(
             select(Bill).where(Bill.id == body.applied_to_bill_id)
         )
         bill = bill_result.scalars().first()
-        if bill:
-            bill.balance_due = bill.balance_due - credit.amount
-            if bill.balance_due <= Decimal("0.00"):
-                bill.balance_due = Decimal("0.00")
-                bill.status = "paid"
-            bill.updated_at = datetime.now(timezone.utc)
-            bill.version += 1
+        if not bill:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Target bill not found",
+            )
+        if bill.resident_id != credit.resident_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Credit and target bill must belong to the same resident",
+            )
+
+        credit.applied_to_bill_id = body.applied_to_bill_id
+        bill.balance_due = bill.balance_due - credit.amount
+        if bill.balance_due <= Decimal("0.00"):
+            bill.balance_due = Decimal("0.00")
+            bill.status = "paid"
+        bill.updated_at = datetime.now(timezone.utc)
+        bill.version += 1
 
     credit.version += 1
     credit.updated_at = datetime.now(timezone.utc)

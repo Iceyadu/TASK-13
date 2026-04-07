@@ -68,6 +68,9 @@ class ListingListResponse(BaseModel):
 class ListingMediaRef(BaseModel):
     media_id: uuid.UUID
     sort_order: int
+    filename: str | None = None
+    mime_type: str | None = None
+    file_url: str | None = None
     model_config = {"from_attributes": True}
 
 

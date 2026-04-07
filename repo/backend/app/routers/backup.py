@@ -3,6 +3,8 @@ import hashlib
 import os
 import subprocess
 import tempfile
+import tarfile
+import shutil
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import UUID
@@ -96,6 +98,25 @@ def _run_pg_restore(input_path: str) -> bool:
         return False
 
 
+def _build_backup_bundle(raw_dump_path: str, bundle_path: str) -> None:
+    """Create a tar.gz bundle with database dump and uploaded files."""
+    uploads_dir = Path(settings.UPLOAD_DIR)
+    with tarfile.open(bundle_path, "w:gz") as tar:
+        tar.add(raw_dump_path, arcname="database.dump")
+        if uploads_dir.exists():
+            tar.add(str(uploads_dir), arcname="uploads")
+
+
+def _restore_uploads_from_bundle(extract_dir: Path) -> None:
+    bundled_uploads = extract_dir / "uploads"
+    if not bundled_uploads.exists():
+        return
+    target_uploads = Path(settings.UPLOAD_DIR)
+    if target_uploads.exists():
+        shutil.rmtree(target_uploads)
+    shutil.copytree(bundled_uploads, target_uploads)
+
+
 # -- Endpoints -----------------------------------------------------------------
 
 @router.get("/records", response_model=BackupRecordListResponse)
@@ -135,23 +156,26 @@ async def trigger_backup(
     current_user: User = Depends(require_roles("admin")),
 ):
     now = datetime.now(timezone.utc)
-    filename = f"harborview_{now.strftime('%Y%m%d_%H%M%S')}.sql.enc"
+    filename = f"harborview_{now.strftime('%Y%m%d_%H%M%S')}.bundle.enc"
     backup_dir = Path(settings.BACKUP_DIR)
     backup_dir.mkdir(parents=True, exist_ok=True)
 
     started_at = datetime.now(timezone.utc)
 
-    # Create a temporary file for the raw pg_dump output.
+    # Create temporary files for raw dump and bundled archive.
     with tempfile.NamedTemporaryFile(suffix=".dump", delete=False) as tmp:
         raw_dump_path = tmp.name
+    with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp_bundle:
+        bundle_path = tmp_bundle.name
 
     try:
         dump_ok = _run_pg_dump(raw_dump_path)
 
         if dump_ok:
+            _build_backup_bundle(raw_dump_path, bundle_path)
             encrypted_path = str(backup_dir / filename)
             file_size = _encrypt_file(
-                raw_dump_path, encrypted_path, settings.BACKUP_PASSPHRASE
+                bundle_path, encrypted_path, settings.BACKUP_PASSPHRASE
             )
             completed_at = datetime.now(timezone.utc)
             record_status = "completed"
@@ -163,6 +187,8 @@ async def trigger_backup(
         # Always clean up the temporary raw dump.
         if os.path.exists(raw_dump_path):
             os.unlink(raw_dump_path)
+        if os.path.exists(bundle_path):
+            os.unlink(bundle_path)
 
     record = BackupRecord(
         filename=filename,
@@ -270,8 +296,8 @@ async def trigger_restore(
         # Full-file decryption fallback validation (Fernet tokens are atomic).
         pass
 
-    # Decrypt to a temporary file and restore.
-    with tempfile.NamedTemporaryFile(suffix=".dump", delete=False) as tmp:
+    # Decrypt backup bundle to a temporary file and restore DB + uploads.
+    with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp:
         decrypted_path = tmp.name
 
     try:
@@ -283,7 +309,21 @@ async def trigger_restore(
                 detail="Failed to decrypt backup -- invalid passphrase",
             )
 
-        restore_ok = _run_pg_restore(decrypted_path)
+        with tempfile.TemporaryDirectory() as extract_dir_str:
+            extract_dir = Path(extract_dir_str)
+            with tarfile.open(decrypted_path, "r:gz") as tar:
+                tar.extractall(extract_dir)
+            dump_file = extract_dir / "database.dump"
+            if not dump_file.exists():
+                record.status = "restore_failed"
+                await db.commit()
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Backup bundle is missing database dump",
+                )
+            restore_ok = _run_pg_restore(str(dump_file))
+            if restore_ok:
+                _restore_uploads_from_bundle(extract_dir)
         if restore_ok:
             record.status = "restored"
         else:

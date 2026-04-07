@@ -215,3 +215,36 @@ def test_verify_payment_with_admin_token(base_url: str, auth_token: str):
         data = resp.json()
         assert data["status"] == "verified"
         print(f"  -> payment status={data['status']}, reviewed_by={data['reviewed_by']}")
+
+
+def test_payment_evidence_file_can_be_downloaded(base_url: str, auth_token: str):
+    """Create payment evidence and verify media file endpoint serves it."""
+    property_id = _get_property_id(base_url, auth_token)
+    _ensure_bills(base_url, auth_token, property_id, "2026-05")
+    resident_token, resident_id = _login_as_resident(base_url)
+    bill_id = _get_bill_id(base_url, resident_token, resident_id)
+
+    png_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 128
+    with httpx.Client(
+        base_url=base_url,
+        timeout=30.0,
+        headers={"Authorization": f"Bearer {resident_token}"},
+    ) as c:
+        create_resp = c.post(
+            "/payments/",
+            data={
+                "bill_id": bill_id,
+                "amount": "120.00",
+                "payment_method": "check",
+            },
+            files={"evidence_file": ("evidence.png", png_bytes, "image/png")},
+        )
+        create_resp.raise_for_status()
+        payment = create_resp.json()
+        media_id = payment.get("evidence_media_id")
+        assert media_id, "Expected evidence_media_id on created payment"
+
+        file_resp = c.get(f"/media/{media_id}/file")
+        print(f"[GET /media/{{id}}/file] status={file_resp.status_code}")
+        assert file_resp.status_code == 200
+        assert file_resp.headers.get("content-type", "").startswith("image/png")
