@@ -58,13 +58,6 @@ class BulkStatusResponse(BaseModel):
     results: list[BulkStatusResult]
 
 
-class ListingListResponse(BaseModel):
-    items: list["ListingResponse"]
-    total: int
-    page: int
-    page_size: int
-
-
 class ListingMediaRef(BaseModel):
     media_id: uuid.UUID
     sort_order: int
@@ -102,3 +95,10 @@ class ListingResponse(BaseModel):
             ]
             return data_dict
         return data
+
+
+class ListingListResponse(BaseModel):
+    items: list[ListingResponse]
+    total: int
+    page: int
+    page_size: int

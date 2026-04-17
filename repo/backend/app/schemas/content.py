@@ -66,13 +66,6 @@ class ContentSectionResponse(BaseModel):
 ContentConfigStatusUpdate = ContentStatusUpdate
 
 
-class ContentConfigListResponse(BaseModel):
-    items: list["ContentConfigResponse"]
-    total: int
-    page: int
-    page_size: int
-
-
 class ContentConfigResponse(BaseModel):
     id: uuid.UUID
     name: str
@@ -85,3 +78,10 @@ class ContentConfigResponse(BaseModel):
     version: int
 
     model_config = {"from_attributes": True}
+
+
+class ContentConfigListResponse(BaseModel):
+    items: list[ContentConfigResponse]
+    total: int
+    page: int
+    page_size: int

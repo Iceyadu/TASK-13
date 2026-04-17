@@ -39,13 +39,6 @@ class MilestoneResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class OrderListResponse(BaseModel):
-    items: list["OrderResponse"]
-    total: int
-    page: int
-    page_size: int
-
-
 class OrderResponse(BaseModel):
     id: uuid.UUID
     resident_id: uuid.UUID
@@ -62,3 +55,10 @@ class OrderResponse(BaseModel):
     version: int
 
     model_config = {"from_attributes": True}
+
+
+class OrderListResponse(BaseModel):
+    items: list[OrderResponse]
+    total: int
+    page: int
+    page_size: int
