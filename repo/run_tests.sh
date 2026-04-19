@@ -101,7 +101,13 @@ run_pytest() {
   # API tests always run in the backend container (Python + backend/requirements.txt).
   if [[ "$test_path" == API_tests ]] || [[ "$test_path" == API_tests/* ]]; then
     export API_INPROCESS="${API_INPROCESS:-1}"
-    export API_BASE_URL="${API_BASE_URL:-http://test}"
+    # In-process ASGI ignores real network hosts; httpx only needs a stable origin + path.
+    # CI often exports API_BASE_URL to an unrelated gateway (breaking .../api/v1 joins) — override.
+    if [[ "$API_INPROCESS" == "0" || "$API_INPROCESS" == "false" ]]; then
+      export API_BASE_URL="${API_BASE_URL:-http://127.0.0.1:8001}"
+    else
+      export API_BASE_URL="http://test"
+    fi
     if ! command -v docker >/dev/null 2>&1; then
       red "API tests require Docker."
       return 127
@@ -167,13 +173,14 @@ run_api_tests() {
     ensure_http_api_stack_if_needed
     verify_http_api_reachable
   else
-    export API_BASE_URL="${API_BASE_URL:-http://test}"
     if [ -f .env ]; then
       set -a
       # shellcheck source=/dev/null
       . ./.env
       set +a
     fi
+    # After .env (may set a host-only URL) — in-process tests must not inherit CI's API_BASE_URL.
+    export API_BASE_URL="http://test"
     ensure_postgres_for_api_tests
   fi
 

@@ -102,10 +102,15 @@ def _start_api_lifespan_on_bridge(app: Any) -> None:
     )
 
 
-API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
 # Default off: local `pytest API_tests` expects a live server unless API_INPROCESS=1.
 # run_tests.sh sets API_INPROCESS=1 (ASGI in-process; only Postgres required).
 USE_INPROCESS = os.environ.get("API_INPROCESS", "0").lower() in ("1", "true", "yes")
+# In-process mode talks to the local ASGI app only; a stable synthetic origin is required.
+# CI sometimes sets API_BASE_URL to an external gateway — that would break .../api/v1 path joins.
+if USE_INPROCESS:
+    API_BASE_URL = "http://test"
+else:
+    API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
 
 
 def pytest_configure(config: pytest.Config) -> None:
