@@ -1,10 +1,40 @@
 """API tests for bill generation and billing rules (tax calculations)."""
 
-import random
 from decimal import Decimal
 from datetime import date
 
 import httpx
+
+
+def _used_billing_periods_for_property(c: httpx.Client, property_id: str) -> set[str]:
+    """Collect billing_period values that already have bills for this property (all pages)."""
+    used: set[str] = set()
+    page = 1
+    page_size = 100
+    while True:
+        resp = c.get("/billing/bills", params={"page": page, "page_size": page_size})
+        resp.raise_for_status()
+        data = resp.json()
+        for b in data["items"]:
+            if str(b["property_id"]) == str(property_id):
+                used.add(b["billing_period"])
+        items = data["items"]
+        total = data["total"]
+        if not items or page * page_size >= total:
+            break
+        page += 1
+    return used
+
+
+def _first_unused_billing_period(used: set[str], start_year: int | None = None) -> str:
+    """Pick YYYY-MM not in *used* (generate_bills returns 0 if period already exists for property)."""
+    y0 = start_year if start_year is not None else date.today().year + 5
+    for y in range(y0, y0 + 80):
+        for m in range(1, 13):
+            p = f"{y:04d}-{m:02d}"
+            if p not in used:
+                return p
+    raise AssertionError("No unused billing period found in scan window")
 
 
 def _get_property_id(base_url: str, admin_token: str) -> str:
@@ -45,18 +75,17 @@ def test_bill_generation_with_tax_calculations(base_url: str, auth_token: str):
     - line_items has 2 items
     """
     property_id = _get_property_id(base_url, auth_token)
-    # generate_bills skips when any bill already exists for (property_id, billing_period).
-    # A fixed far-future month collides on every rerun against a persistent DB; randomize YYYY-MM.
-    rng = random.Random()
-    billing_period = (
-        f"{date.today().year + 5 + rng.randint(0, 20):04d}-{rng.randint(1, 12):02d}"
-    )
 
     with httpx.Client(
         base_url=base_url,
         timeout=30.0,
         headers={"Authorization": f"Bearer {auth_token}"},
     ) as c:
+        # Period must be unused for this property or generate_bills returns bills_created=0 (idempotent skip).
+        billing_period = _first_unused_billing_period(
+            _used_billing_periods_for_property(c, property_id)
+        )
+
         # Deactivate existing fee items so only our two are active
         _cleanup_fee_items(base_url, auth_token)
 
