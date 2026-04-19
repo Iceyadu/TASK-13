@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Header, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.dependencies import get_current_user, require_roles
@@ -41,11 +42,21 @@ TRANSITION_ROLES: dict[str, set[str]] = {
 # -- Helpers -------------------------------------------------------------------
 
 async def _get_order_or_404(db: AsyncSession, order_id: UUID) -> Order:
-    result = await db.execute(select(Order).where(Order.id == order_id))
+    result = await db.execute(
+        select(Order).where(Order.id == order_id).options(selectinload(Order.milestones))
+    )
     order = result.scalars().first()
     if not order:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
     return order
+
+
+async def _reload_order_with_milestones(db: AsyncSession, order_id: UUID) -> Order:
+    """Reload order with milestones eagerly loaded (required for Pydantic in async sessions)."""
+    result = await db.execute(
+        select(Order).where(Order.id == order_id).options(selectinload(Order.milestones))
+    )
+    return result.scalar_one()
 
 
 async def _get_resident_for_user(db: AsyncSession, user_id: UUID) -> Resident:
@@ -72,7 +83,7 @@ async def list_orders(
     current_user: User = Depends(get_current_user),
 ):
     offset = (page - 1) * page_size
-    query = select(Order)
+    query = select(Order).options(selectinload(Order.milestones))
 
     # Residents can only see their own orders
     if current_user.role == "resident":
@@ -118,7 +129,9 @@ async def create_order(
 
     # Idempotency check: if an order with this key already exists, return it
     existing = await db.execute(
-        select(Order).where(Order.idempotency_key == body.idempotency_key)
+        select(Order)
+        .where(Order.idempotency_key == body.idempotency_key)
+        .options(selectinload(Order.milestones))
     )
     existing_order = existing.scalars().first()
     if existing_order:
@@ -163,6 +176,8 @@ async def create_order(
         notes="Order created",
     )
     db.add(milestone)
+    await db.flush()
+    order = await _reload_order_with_milestones(db, order.id)
 
     await log_audit(
         db, user_id=current_user.id, action="CREATE",
@@ -177,7 +192,7 @@ async def create_order(
     )
 
     await db.commit()
-    await db.refresh(order)
+    order = await _reload_order_with_milestones(db, order.id)
     return OrderResponse.model_validate(order)
 
 
@@ -243,7 +258,7 @@ async def update_order(
     order.version += 1
     order.updated_at = datetime.now(timezone.utc)
     await db.commit()
-    await db.refresh(order)
+    order = await _reload_order_with_milestones(db, order_id)
     return OrderResponse.model_validate(order)
 
 
@@ -335,6 +350,7 @@ async def transition_order_endpoint(
         user_id=current_user.id,
         notes=body.notes,
     )
+    order = await _reload_order_with_milestones(db, order.id)
 
     await log_audit(
         db, user_id=current_user.id, action="STATE_CHANGE",
@@ -350,7 +366,7 @@ async def transition_order_endpoint(
     )
 
     await db.commit()
-    await db.refresh(order)
+    order = await _reload_order_with_milestones(db, order_id)
     return OrderResponse.model_validate(order)
 
 

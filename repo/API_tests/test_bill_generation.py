@@ -1,5 +1,6 @@
 """API tests for bill generation and billing rules (tax calculations)."""
 
+import random
 from decimal import Decimal
 from datetime import date
 
@@ -44,7 +45,12 @@ def test_bill_generation_with_tax_calculations(base_url: str, auth_token: str):
     - line_items has 2 items
     """
     property_id = _get_property_id(base_url, auth_token)
-    billing_period = f"{date.today().year + 5}-{date.today().month:02d}"
+    # generate_bills skips when any bill already exists for (property_id, billing_period).
+    # A fixed far-future month collides on every rerun against a persistent DB; randomize YYYY-MM.
+    rng = random.Random()
+    billing_period = (
+        f"{date.today().year + 5 + rng.randint(0, 20):04d}-{rng.randint(1, 12):02d}"
+    )
 
     with httpx.Client(
         base_url=base_url,
