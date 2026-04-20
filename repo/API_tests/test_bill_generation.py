@@ -49,21 +49,33 @@ def _get_property_id(base_url: str, admin_token: str) -> str:
         return resp.json()["items"][0]["id"]
 
 
-def _cleanup_fee_items(base_url: str, admin_token: str):
-    """Deactivate all existing fee items to start with a clean slate."""
+def _cleanup_fee_items(base_url: str, admin_token: str, property_id: str):
+    """Deactivate all active fee items for a property (across all pages)."""
     with httpx.Client(
         base_url=base_url,
         timeout=30.0,
         headers={"Authorization": f"Bearer {admin_token}"},
     ) as c:
-        resp = c.get("/billing/fee-items")
-        resp.raise_for_status()
-        for item in resp.json()["items"]:
-            c.put(
-                f"/billing/fee-items/{item['id']}",
-                json={"is_active": False},
-                headers={"If-Match": str(item["version"])},
-            )
+        page = 1
+        page_size = 100
+        while True:
+            resp = c.get("/billing/fee-items", params={"page": page, "page_size": page_size})
+            resp.raise_for_status()
+            data = resp.json()
+            items = data["items"]
+            for item in items:
+                if item["property_id"] != property_id:
+                    continue
+                if not item["is_active"]:
+                    continue
+                c.put(
+                    f"/billing/fee-items/{item['id']}",
+                    json={"is_active": False},
+                    headers={"If-Match": str(item["version"])},
+                )
+            if not items or page * page_size >= data["total"]:
+                break
+            page += 1
 
 
 def test_bill_generation_with_tax_calculations(base_url: str, auth_token: str):
@@ -87,7 +99,7 @@ def test_bill_generation_with_tax_calculations(base_url: str, auth_token: str):
         )
 
         # Deactivate existing fee items so only our two are active
-        _cleanup_fee_items(base_url, auth_token)
+        _cleanup_fee_items(base_url, auth_token, property_id)
 
         # Create "Monthly Rent" $1400, not taxable
         rent_resp = c.post(
@@ -123,17 +135,27 @@ def test_bill_generation_with_tax_calculations(base_url: str, auth_token: str):
         print(f"[POST /billing/generate period={billing_period}] status={gen_resp.status_code}")
         assert gen_resp.status_code == 202
         gen_data = gen_resp.json()
-        print(f"  -> bills_created={gen_data.get('bills_created')}")
-        assert gen_data.get("bills_created", 0) > 0
+        bills_created = int(gen_data.get("bills_created", 0))
+        print(f"  -> bills_created={bills_created}")
 
-        # Fetch the generated bills for this test period
-        bills_resp = c.get("/billing/bills", params={"page_size": 100})
+        # Fetch bills for this specific period. `bills_created` can be 0 on idempotent reruns.
+        bills_resp = c.get(
+            "/billing/bills",
+            params={"page_size": 100, "billing_period": billing_period},
+        )
         bills_resp.raise_for_status()
         all_bills = bills_resp.json()["items"]
 
-        # Filter for the target billing period and pick a newly-generated bill
-        period_bills = [b for b in all_bills if b["billing_period"] == billing_period]
-        assert len(period_bills) > 0, f"No bills found for {billing_period}"
+        # Restrict to this property's bills for the selected period.
+        period_bills = [
+            b
+            for b in all_bills
+            if b["billing_period"] == billing_period and b["property_id"] == property_id
+        ]
+        assert len(period_bills) > 0, (
+            f"No bills found for property={property_id}, period={billing_period} "
+            f"(bills_created={bills_created})"
+        )
 
         bill = period_bills[0]
         print(f"\n  Bill details:")
